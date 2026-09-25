@@ -1,106 +1,71 @@
-import pkg from 'pg';
-const { Pool } = pkg;
-import dotenv from 'dotenv';
+import sqlite3 from 'sqlite3';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+const DB_PATH = path.join(__dirname, '../../students.db');
 
-pool.on('error', (err) => {
-  console.error('Erro no pool de conexão:', err);
-});
+let db;
 
-// Funções auxiliares
-export const query = (text, params) => pool.query(text, params);
+export function initDatabase() {
+  return new Promise((resolve, reject) => {
+    db = new sqlite3.Database(DB_PATH, (err) => {
+      if (err) {
+        console.error('Erro ao conectar no banco:', err);
+        reject(err);
+      } else {
+        console.log('✓ Conectado ao SQLite:', DB_PATH);
+        createTablesIfNotExists();
+        resolve(db);
+      }
+    });
+  });
+}
 
-export const getClient = () => pool.connect();
+function createTablesIfNotExists() {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS students (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `, (err) => {
+    if (err) {
+      console.error('Erro ao criar tabela:', err);
+    } else {
+      console.log('✓ Tabela students pronta');
+    }
+  });
+}
 
-export default pool;
+export function getDatabase() {
+  return db;
+}
 
-// SCHEMA DO BANCO DE DADOS (copiar e colar no PostgreSQL)
-export const initDatabase = async () => {
-  const client = await pool.connect();
-  try {
-    // Tabela de usuários
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS usuarios (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        senha_hash VARCHAR(255) NOT NULL,
-        nome VARCHAR(255),
-        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+export function runQuery(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+}
 
-    // Tabela de respostas do questionário
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS questionarios (
-        id SERIAL PRIMARY KEY,
-        usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
-        objetivo VARCHAR(100),
-        frequencia_semana INTEGER,
-        nivel VARCHAR(50),
-        local VARCHAR(100),
-        equipamentos TEXT,
-        restricoes TEXT,
-        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(usuario_id)
-      );
-    `);
-
-    // Tabela de programas gerados
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS programas (
-        id SERIAL PRIMARY KEY,
-        usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
-        questionario_id INTEGER NOT NULL REFERENCES questionarios(id),
-        programa_json JSON,
-        semana_atual INTEGER DEFAULT 1,
-        data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        data_vencimento TIMESTAMP,
-        ativo BOOLEAN DEFAULT true,
-        UNIQUE(usuario_id)
-      );
-    `);
-
-    // Tabela de histórico de treinos
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS historico_treinos (
-        id SERIAL PRIMARY KEY,
-        usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
-        programa_id INTEGER NOT NULL REFERENCES programas(id),
-        dia_treino DATE,
-        tipo_treino VARCHAR(50),
-        exercicio_id INTEGER,
-        peso_utilizado DECIMAL(5,2),
-        repeticoes INTEGER,
-        series_completadas INTEGER,
-        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Tabela de transações (Asaas)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS transacoes (
-        id SERIAL PRIMARY KEY,
-        usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
-        asaas_payment_id VARCHAR(255) UNIQUE,
-        valor DECIMAL(10,2),
-        status VARCHAR(50),
-        metodo_pagamento VARCHAR(50),
-        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        confirmado_em TIMESTAMP
-      );
-    `);
-
-    console.log('Banco de dados inicializado com sucesso');
-  } catch (err) {
-    console.error('Erro ao inicializar banco:', err);
-  } finally {
-    client.release();
-  }
-};
+export function runQuerySingle(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(query, params, (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row);
+      }
+    });
+  });
+}
